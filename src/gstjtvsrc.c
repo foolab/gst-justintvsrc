@@ -128,8 +128,7 @@ static gboolean gst_jtv_src_set_uri (GstJtvSrc * src, const gchar * uri) {
   char *channel = NULL;
 
   if (sscanf(uri, "jtv://%ms", &channel) != 1) {
-    puts("Error");
-    // TODO: error
+    GST_ERROR_OBJECT (src, "Failed to parse URI %s", uri);
     return FALSE;
   }
 
@@ -146,6 +145,7 @@ static gboolean gst_jtv_src_set_uri (GstJtvSrc * src, const gchar * uri) {
   src->channel = channel;
 
   g_object_notify (G_OBJECT (src), "uri");
+
   gst_uri_handler_new_uri (GST_URI_HANDLER (src), src->uri);
 
   return TRUE;
@@ -177,10 +177,10 @@ gst_jtv_src_base_init (gpointer gclass) {
   GstElementClass *element_class = GST_ELEMENT_CLASS (gclass);
 
   gst_element_class_set_details_simple(element_class,
-    "JtvSrc",
-    "Justin TV Source",
-    "Source",
-    "Mohammed Sameer <msameer@foolab.org>>");
+				       "JtvSrc",
+				       "Justin TV Source",
+				       "Source",
+				       "Mohammed Sameer <msameer@foolab.org>>");
 
   gst_element_class_add_pad_template (element_class,
 				      gst_static_pad_template_get (&src_factory));
@@ -221,7 +221,6 @@ gst_jtv_src_init (GstJtvSrc * src, GstJtvSrcClass * gclass) {
   src->channel = NULL;
   src->uri = NULL;
   src->rtmp = NULL;
-  src->offset = 0;
 }
 
 static gboolean
@@ -249,8 +248,6 @@ gst_jtv_src_finalize (GObject * object) {
 static gboolean
 gst_jtv_src_start (GstBaseSrc * basesrc) {
   GstJtvSrc *src = GST_JTVSRC(basesrc);
-
-  src->offset = 0;
 
   if (!src->uri || !src->uri[0]) {
     GST_ELEMENT_ERROR (src, RESOURCE, NOT_FOUND, (NULL), (NULL));
@@ -287,7 +284,6 @@ static GstFlowReturn gst_jtv_src_create (GstBaseSrc * basesrc, guint64 offset,
   }
 
   GstBuffer *buf = gst_buffer_new_and_alloc(length);
-  GST_BUFFER_OFFSET(buf) = offset;
 
   guint8 *data = GST_BUFFER_DATA(buf);
   int size = GST_BUFFER_SIZE(buf);
@@ -305,8 +301,6 @@ static GstFlowReturn gst_jtv_src_create (GstBaseSrc * basesrc, guint64 offset,
   }
 
   GST_BUFFER_SIZE(buf) = read;
-
-  offset += read;
 
   *buffer = buf;
 

@@ -48,8 +48,6 @@ struct _GstJtvSrc
   gchar *channel;
   gchar *uri;
   RTMP *rtmp;
-
-  gint64 offset;
 };
 
 struct _GstJtvSrcClass
