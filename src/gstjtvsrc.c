@@ -47,6 +47,7 @@ typedef struct {
 enum {
   ARG_0,
   ARG_URI,
+  ARG_LOG_LEVEL,
 };
 
 static GstStaticPadTemplate src_factory = GST_STATIC_PAD_TEMPLATE ("src",
@@ -54,6 +55,8 @@ static GstStaticPadTemplate src_factory = GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("ANY")
     );
+
+extern RTMP_LogLevel RTMP_debuglevel;
 
 static void gst_jtv_src_uri_handler_init (gpointer g_iface, gpointer iface_data);
 static void gst_jtv_src_finalize (GObject * object);
@@ -199,12 +202,16 @@ gst_jtv_src_class_init (GstJtvSrcClass * klass) {
   gstbasesrc_class->stop = GST_DEBUG_FUNCPTR(gst_jtv_src_stop);
   gstbasesrc_class->create = GST_DEBUG_FUNCPTR(gst_jtv_src_create);
 
-  GParamFlags flags =
-    (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_MUTABLE_READY);
   g_object_class_install_property (gobject_class, ARG_URI,
 				   g_param_spec_string ("uri", "Stream URI",
 							"URI of the stream", NULL,
-							flags));
+							G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_MUTABLE_READY));
+
+  g_object_class_install_property (gobject_class, ARG_LOG_LEVEL,
+				   g_param_spec_int ("log-level", "Log level",
+						     "librtmp log level", RTMP_LOGCRIT,
+						     RTMP_LOGALL, RTMP_LOGERROR,
+						     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 }
 
 static void
@@ -241,10 +248,6 @@ gst_jtv_src_finalize (GObject * object) {
 
 static gboolean
 gst_jtv_src_start (GstBaseSrc * basesrc) {
-  extern RTMP_LogLevel RTMP_debuglevel;// = RTMP_LOGINFO;
-  //  RTMP_LogLevel = RTMP_LOGINFO;
-  RTMP_debuglevel = RTMP_LOGDEBUG;
-
   GstJtvSrc *src = GST_JTVSRC(basesrc);
 
   src->offset = 0;
@@ -361,15 +364,18 @@ gst_jtv_src_set_property (GObject * object, guint prop_id,
   src = GST_JTVSRC (object);
 
   switch (prop_id) {
-    case ARG_URI:
-      if (!gst_jtv_src_set_uri(src, g_value_get_string (value))) {
-	g_warning ("Failed to set 'uri'");
-      }
+  case ARG_URI:
+    if (!gst_jtv_src_set_uri(src, g_value_get_string (value))) {
+      g_warning ("Failed to set 'uri'");
+    }
 
-      break;
-    default:
-      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
-      break;
+    break;
+  case ARG_LOG_LEVEL:
+    RTMP_debuglevel = g_value_get_int(value);
+    break;
+  default:
+    G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    break;
   }
 }
 
@@ -383,12 +389,15 @@ gst_jtv_src_get_property (GObject * object, guint prop_id, GValue * value,
   src = GST_JTVSRC (object);
 
   switch (prop_id) {
-    case ARG_URI:
-      g_value_set_string (value, src->uri);
-      break;
-    default:
-      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
-      break;
+  case ARG_URI:
+    g_value_set_string (value, src->uri);
+    break;
+  case ARG_LOG_LEVEL:
+    g_value_set_int(value, RTMP_debuglevel);
+    break;
+  default:
+    G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    break;
   }
 }
 
