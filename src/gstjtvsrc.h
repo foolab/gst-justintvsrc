@@ -47,6 +47,7 @@ struct _GstJtvSrc
 
   gchar *channel;
   gchar *uri;
+  gchar *rtmp_url;
   RTMP *rtmp;
 };
 

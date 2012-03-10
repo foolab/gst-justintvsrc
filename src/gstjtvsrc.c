@@ -39,9 +39,9 @@ GST_DEBUG_CATEGORY_STATIC (gst_jtv_src_debug);
 #define STR2AVAL(av,str)        av.av_val = str; av.av_len = strlen(av.av_val)
 
 typedef struct {
-  char *token;
-  char *connect;
-  char *play;
+  xmlChar *token;
+  xmlChar *connect;
+  xmlChar *play;
 } stream_node;
 
 enum {
@@ -72,11 +72,9 @@ static void gst_jtv_src_get_property (GObject * object, guint prop_id,
 static void gst_jtv_src_do_init(GType type);
 static gboolean gst_jtv_src_set_uri (GstJtvSrc * src, const gchar * uri);
 
-static gboolean _gst_jtv_src_start(gpointer data);
+static SoupMessage *download_xml(GstJtvSrc *src);
 
-static SoupMessage *download_xml(const gchar *channel_id);
-
-static stream_node *get_stream_node(const char *xml, int len);
+static stream_node *get_stream_node(GstJtvSrc *src, const char *xml, int len);
 
 static gboolean rtmp_connect(GstJtvSrc *src, stream_node *node);
 
@@ -221,6 +219,7 @@ gst_jtv_src_init (GstJtvSrc * src, GstJtvSrcClass * gclass) {
   src->channel = NULL;
   src->uri = NULL;
   src->rtmp = NULL;
+  src->rtmp_url = NULL;
 }
 
 static gboolean
@@ -249,16 +248,58 @@ static gboolean
 gst_jtv_src_start (GstBaseSrc * basesrc) {
   GstJtvSrc *src = GST_JTVSRC(basesrc);
 
+  SoupMessage *msg = NULL;
+  stream_node *node = NULL;
+  gboolean ret_val = TRUE;
+
   if (!src->uri || !src->uri[0]) {
-    GST_ELEMENT_ERROR (src, RESOURCE, NOT_FOUND, (NULL), (NULL));
+    GST_ELEMENT_ERROR (src, RESOURCE, NOT_FOUND, (NULL), ("No uri given"));
     return FALSE;
   }
 
-  if (!_gst_jtv_src_start(src)) {
+  if (!src->channel || !src->channel[0]) {
+    GST_ELEMENT_ERROR (src, RESOURCE, NOT_FOUND, (NULL), ("No channel given"));
     return FALSE;
   }
 
-  return TRUE;
+  msg = download_xml(src);
+  if (!msg) {
+    ret_val = FALSE;
+    goto out;
+  }
+
+  node = get_stream_node(src, msg->response_body->data, msg->response_body->length);
+
+  g_object_unref(msg);
+  msg = NULL;
+
+  if (!node) {
+    ret_val = FALSE;
+    goto out;
+  }
+
+  GST_DEBUG_OBJECT (src, "Using the following stream properties: Play: '%s', Token: '%s', Connect: '%s'", node->play, node->token, node->connect);
+
+  if (!rtmp_connect(src, node)) {
+    ret_val = FALSE;
+    goto out;
+  }
+
+ out:
+  if (msg) {
+    g_object_unref(msg);
+    msg = NULL;
+  }
+
+  if (node) {
+    xmlFree(node->play);
+    xmlFree(node->connect);
+    xmlFree(node->token);
+    g_free(node);
+    node = NULL;
+  }
+
+  return ret_val;
 }
 
 static gboolean
@@ -269,6 +310,8 @@ gst_jtv_src_stop (GstBaseSrc * basesrc) {
     RTMP_Close(src->rtmp);
     RTMP_Free(src->rtmp);
     src->rtmp = NULL;
+    g_free(src->rtmp_url);
+    src->rtmp_url = NULL;
   }
 
   return TRUE;
@@ -288,14 +331,14 @@ static GstFlowReturn gst_jtv_src_create (GstBaseSrc * basesrc, guint64 offset,
   guint8 *data = GST_BUFFER_DATA(buf);
   int size = GST_BUFFER_SIZE(buf);
 
-  int read = RTMP_Read(src->rtmp, data, size);
+  int read = RTMP_Read(src->rtmp, (char *)data, size);
 
   if (read == 0) {
     gst_buffer_unref(buf);
     return GST_FLOW_UNEXPECTED;
   }
   else if (read < 0) {
-    // TODO: error
+    GST_ELEMENT_ERROR (src, RESOURCE, READ, (NULL), ("Failed to read RTMP stream"));
     gst_buffer_unref(buf);
     return GST_FLOW_ERROR;
   }
@@ -305,47 +348,6 @@ static GstFlowReturn gst_jtv_src_create (GstBaseSrc * basesrc, guint64 offset,
   *buffer = buf;
 
   return GST_FLOW_OK;
-  //  while (1) {
-  //    sleep (1);
-  //  }
-
-  // TODO:
-#if 0
-
-
-  if (src->read_position != offset) {
-    if (!src->file->seek(offset)) {
-      return GST_FLOW_ERROR;
-    }
-  }
-
-  GstBuffer *buf = gst_buffer_new_and_alloc(length);
-
-  qint64 read = src->file->read((char *)GST_BUFFER_DATA(buf), length);
-
-  if (read == -1) {
-    gst_buffer_unref(buf);
-    return GST_FLOW_ERROR;
-  }
-  else if (read == 0) {
-    gst_buffer_unref(buf);
-    return GST_FLOW_UNEXPECTED;
-  }
-
-  *buffer = buf;
-
-  GST_BUFFER_SIZE(buf) = read;
-
-  GST_BUFFER_OFFSET(buf) = offset;
-  GST_BUFFER_OFFSET_END(buf) = offset + read;
-
-  src->read_position += read;
-
-  return GST_FLOW_OK;
-
-#endif
-
-  return GST_FLOW_ERROR;
 }
 
 static void
@@ -362,7 +364,6 @@ gst_jtv_src_set_property (GObject * object, guint prop_id,
     if (!gst_jtv_src_set_uri(src, g_value_get_string (value))) {
       g_warning ("Failed to set 'uri'");
     }
-
     break;
   case ARG_LOG_LEVEL:
     RTMP_debuglevel = g_value_get_int(value);
@@ -395,197 +396,158 @@ gst_jtv_src_get_property (GObject * object, guint prop_id, GValue * value,
   }
 }
 
-static SoupMessage *download_xml(const gchar *channel_id) {
+static SoupMessage *download_xml(GstJtvSrc *src) {
+  char *url = g_strdup_printf(XML_URL, src->channel);
+
   SoupSession *session = soup_session_sync_new();
 
-  char *url = g_strdup_printf(XML_URL, channel_id);
-
   SoupMessage *msg = soup_message_new ("GET", url);
-  g_free(url);
 
   guint status = soup_session_send_message (session, msg);
 
   if (!SOUP_STATUS_IS_SUCCESSFUL(status)) {
+    GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ, (NULL), ("Error %d while downloading %s",
+							  status, url));
 
     g_object_unref(msg);
 
-    g_object_unref(session);
+    msg = NULL;
 
-    // TODO: error
-
-    return NULL;
+    goto out;
   }
 
+ out:
+  g_free(url);
   g_object_unref(session);
 
   return msg;
 }
 
-static stream_node *get_stream_node(const char *xml, int len) {
+static stream_node *get_stream_node(GstJtvSrc *src, const char *xml, int len) {
+  xmlDocPtr doc = xmlParseMemory(xml, len);
+  stream_node *node = NULL;
   xmlNodePtr cur = NULL;
 
-  xmlDocPtr doc = xmlParseMemory(xml, len);
   if (!doc) {
-    // TODO: error
-    return NULL;
+    GST_ERROR_OBJECT (src, "Failed to parse XML");
+    goto out;
   }
 
   cur = xmlDocGetRootElement(doc);
   if (!cur) {
-    // TODO: error
-    xmlFreeDoc(doc);
-    return NULL;
+    GST_ERROR_OBJECT (src, "No root element found");
+    goto out;
   }
 
   if (xmlStrcmp(cur->name, (const xmlChar *) "nodes")) {
-    // TODO: error
-    xmlFreeDoc(doc);
-    return NULL;
+    GST_ERROR_OBJECT (src, "Invalid XML document");
+    goto out;
   }
 
   cur = cur->xmlChildrenNode;
   if (!cur) {
-    // TODO: error
-    xmlFreeDoc(doc);
-    return NULL;
+    GST_ERROR_OBJECT (src, "Failed to get stream node");
+    goto out;
   }
 
-  //  puts(cur->name);
+  GST_DEBUG_OBJECT (src, "Using node %s", cur->name);
 
-  stream_node *node = g_new(stream_node, sizeof(stream_node));
-  if (!node) {
-    // TODO: error
-    xmlFreeDoc(doc);
-    return NULL;
-  }
+  node = g_new(stream_node, sizeof(stream_node));
 
   cur = cur->xmlChildrenNode;
   while (cur) {
     if (!xmlStrcmp(cur->name, (const xmlChar *)"token")) {
-      xmlChar *key = xmlNodeListGetString(doc, cur->xmlChildrenNode, 1);
-      node->token = g_strdup(key);
-      xmlFree(key);
+      node->token = xmlNodeListGetString(doc, cur->xmlChildrenNode, 1);
     }
     else if (!xmlStrcmp(cur->name, (const xmlChar *)"connect")) {
-      xmlChar *key = xmlNodeListGetString(doc, cur->xmlChildrenNode, 1);
-      node->connect = g_strdup(key);
-      xmlFree(key);
+      node->connect = xmlNodeListGetString(doc, cur->xmlChildrenNode, 1);
     }
     else if (!xmlStrcmp(cur->name, (const xmlChar *)"play")) {
-      xmlChar *key = xmlNodeListGetString(doc, cur->xmlChildrenNode, 1);
-      node->play = g_strdup(key);
-      xmlFree(key);
+      node->play = xmlNodeListGetString(doc, cur->xmlChildrenNode, 1);
     }
+
     cur = cur->next;
   }
 
   if (!node->play || !node->connect || !node->token) {
-    // TODO: error.
+    GST_ERROR_OBJECT (src, "Invalid stream node");
 
-    g_free(node->play);
-    g_free(node->connect);
-    g_free(node->token);
+    xmlFree(node->play);
+    xmlFree(node->connect);
+    xmlFree(node->token);
     g_free(node);
     node = NULL;
+
+    goto out;
   }
 
-  xmlFreeDoc(doc);
+ out:
+  if (doc) {
+    xmlFreeDoc(doc);
+  }
 
   return node;
 }
 
 static gboolean rtmp_connect(GstJtvSrc *src, stream_node *node) {
-#if 0
-  if (!RTMP_ParseURL(uri, &protocol, &host, &port, &path, &app)) {
-    // TODO: error
-
-    g_free(uri);
-
-    return FALSE;
-  }
-#endif
-
   src->rtmp = RTMP_Alloc();
+
+  src->rtmp_url = g_strdup_printf("%s/%s", node->connect, node->play);
+
   RTMP_Init(src->rtmp);
 
-  char *uri = g_strdup_printf("%s/%s", node->connect, node->play);
-
-  if (!RTMP_SetupURL(src->rtmp, uri)) {
-    // TODO: error.
-    g_free(uri);
-    RTMP_Free(src->rtmp);
-    src->rtmp = NULL;
-    return FALSE;
+  if (!RTMP_SetupURL(src->rtmp, src->rtmp_url)) {
+    GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ, (NULL),
+		       ("Failed to setup URL '%s'", src->rtmp_url));
+    goto error;
   }
 
   AVal swfopt; STR2AVAL(swfopt, "swfUrl");
   AVal jtvopt; STR2AVAL(jtvopt, "jtv");
   AVal swf; STR2AVAL(swf, SWF_URL);
-  AVal jtv; STR2AVAL(jtv, node->token);
+  AVal jtv; STR2AVAL(jtv, (char *)node->token);
 
-  if (!RTMP_SetOpt(src->rtmp, &swfopt, &swf) || !RTMP_SetOpt(src->rtmp, &jtvopt, &jtv)) {
-    // TODO: error
-
-    RTMP_Free(src->rtmp);
-    src->rtmp = NULL;
-
-    g_free(uri);
-
-    return FALSE;
+  if (!RTMP_SetOpt(src->rtmp, &swfopt, &swf)) {
+    GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ, (NULL),
+		       ("Failed to set swf URL '%s'", SWF_URL));
+    goto error;
   }
 
+  if (!RTMP_SetOpt(src->rtmp, &jtvopt, &jtv)) {
+    GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ, (NULL),
+		       ("Failed to set jtv token"));
+
+    goto error;
+  }
 
   if (!RTMP_Connect(src->rtmp, NULL)) {
-    // TODO: error.
-    RTMP_Free(src->rtmp);
-    src->rtmp = NULL;
-    g_free(uri);
-    return FALSE;
+    GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ, (NULL),
+		       ("Could not connect to RTMP server"));
+
+    goto error;
   }
 
   if (!RTMP_ConnectStream(src->rtmp, 0)) {
-    // TODO: error.
+    GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ, (NULL),
+		       ("Could not connect to RTMP stream '%s'", src->rtmp_url));
+
+    goto error;
+  }
+
+  return TRUE;
+
+ error:
+  if (src->rtmp) {
     RTMP_Free(src->rtmp);
     src->rtmp = NULL;
-    g_free(uri);
-    return FALSE;
   }
 
-  g_free(uri);
-
-  return TRUE;
-}
-
-gboolean _gst_jtv_src_start(gpointer data) {
-  GstJtvSrc *src = (GstJtvSrc *)data;
-
-  SoupMessage *msg = download_xml(src->channel);
-  if (!msg) {
-    return FALSE;
+  if (src->rtmp_url) {
+    g_free(src->rtmp_url);
+    src->rtmp_url = NULL;
   }
 
-  stream_node *node = get_stream_node(msg->response_body->data, msg->response_body->length);
-
-  g_object_unref(msg);
-
-  if (!node) {
-    return FALSE;
-  }
-
-  puts(node->play);
-  puts(node->token);
-  puts(node->connect);
-
-  if (!rtmp_connect(src, node)) {
-    g_free(node->play);
-    g_free(node->connect);
-    g_free(node->token);
-    g_free(node);
-
-    return FALSE;
-  }
-
-  return TRUE;
+  return FALSE;
 }
 
 GST_PLUGIN_DEFINE(GST_VERSION_MAJOR, GST_VERSION_MINOR, "jtvsrc",
