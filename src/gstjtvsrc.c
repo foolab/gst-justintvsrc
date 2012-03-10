@@ -568,14 +568,7 @@ gboolean _gst_jtv_src_start(gpointer data) {
   return TRUE;
 }
 
-GST_PLUGIN_DEFINE (
-    GST_VERSION_MAJOR,
-    GST_VERSION_MINOR,
-    "jtvsrc",
-    "Justin TV Source",
-    jtvsrc_init,
-    VERSION,
-    "GPL",
-    "",
-    ""
-    )
+GST_PLUGIN_DEFINE(GST_VERSION_MAJOR, GST_VERSION_MINOR, "jtvsrc",
+		  "Justin TV Source", jtvsrc_init, VERSION,
+		  "LGPL", PACKAGE,
+		  "https://gitorious.org/justin-tv-gstreamer-source")
