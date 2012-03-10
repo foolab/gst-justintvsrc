@@ -23,6 +23,11 @@
 #include <libxml/parser.h>
 #include <libxml/tree.h>
 #include <librtmp/log.h>
+#include <string.h>
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif /* HAVE_CONFIG_H */
 
 GST_DEBUG_CATEGORY_STATIC (gst_jtv_src_debug);
 #define GST_CAT_DEFAULT gst_jtv_src_debug
@@ -30,16 +35,7 @@ GST_DEBUG_CATEGORY_STATIC (gst_jtv_src_debug);
 #define XML_URL "http://usher.justin.tv/find/%s.xml?type=any"
 #define SWF_URL "http://www-cdn.justin.tv/widgets/live_site_player.swf"
 
-// TODO:
-#ifndef PACKAGE
-#define PACKAGE "jtv"
-#endif
-
-#ifndef VERSION
-#define VERSION "0.1"
-#endif
-
-// TODO:
+// Stolen from rtmpdump
 #define STR2AVAL(av,str)        av.av_val = str; av.av_len = strlen(av.av_val)
 
 typedef struct {
@@ -84,12 +80,13 @@ static gboolean rtmp_connect(GstJtvSrc *src, stream_node *node);
 GST_BOILERPLATE_FULL (GstJtvSrc, gst_jtv_src, GstBaseSrc,
 		      GST_TYPE_BASE_SRC, gst_jtv_src_do_init);
 
-static gboolean gst_jtv_src_is_seekable(GstBaseSrc *src) {
+static gboolean
+gst_jtv_src_is_seekable(GstBaseSrc *src) {
   return FALSE;
 }
 
 static GstURIType
-gst_jtv_src_uri_get_type () {
+gst_jtv_src_uri_get_type() {
   return GST_URI_SRC;
 }
 
