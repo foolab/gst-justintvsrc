@@ -215,11 +215,13 @@ gst_jtv_src_class_init (GstJtvSrcClass * klass) {
 static void
 gst_jtv_src_init (GstJtvSrc * src, GstJtvSrcClass * gclass) {
   gst_base_src_set_live(GST_BASE_SRC(src), TRUE);
+  gst_base_src_set_format(GST_BASE_SRC(src), GST_FORMAT_BYTES);
 
   src->channel = NULL;
   src->uri = NULL;
   src->rtmp = NULL;
   src->rtmp_url = NULL;
+  src->cur_offset = 0;
 }
 
 static gboolean
@@ -247,6 +249,8 @@ gst_jtv_src_finalize (GObject * object) {
 static gboolean
 gst_jtv_src_start (GstBaseSrc * basesrc) {
   GstJtvSrc *src = GST_JTVSRC(basesrc);
+
+  src->cur_offset = 0;
 
   SoupMessage *msg = NULL;
   stream_node *node = NULL;
@@ -327,6 +331,8 @@ static GstFlowReturn gst_jtv_src_create (GstBaseSrc * basesrc, guint64 offset,
   }
 
   GstBuffer *buf = gst_buffer_new_and_alloc(length);
+  GST_BUFFER_TIMESTAMP(buf) = GST_CLOCK_TIME_NONE;
+  GST_BUFFER_OFFSET (buf) = src->cur_offset;
 
   guint8 *data = GST_BUFFER_DATA(buf);
   int size = GST_BUFFER_SIZE(buf);
@@ -344,6 +350,8 @@ static GstFlowReturn gst_jtv_src_create (GstBaseSrc * basesrc, guint64 offset,
   }
 
   GST_BUFFER_SIZE(buf) = read;
+
+  src->cur_offset += read;
 
   *buffer = buf;
 

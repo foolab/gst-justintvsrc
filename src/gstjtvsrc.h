@@ -49,6 +49,7 @@ struct _GstJtvSrc
   gchar *uri;
   gchar *rtmp_url;
   RTMP *rtmp;
+  gulong cur_offset;
 };
 
 struct _GstJtvSrcClass
