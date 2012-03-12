@@ -310,6 +310,8 @@ static gboolean
 gst_jtv_src_stop (GstBaseSrc * basesrc) {
   GstJtvSrc *src = GST_JTVSRC(basesrc);
 
+  GST_DEBUG_OBJECT (src, "Stopping");
+
   if (src->rtmp) {
     RTMP_Close(src->rtmp);
     RTMP_Free(src->rtmp);
@@ -337,7 +339,11 @@ static GstFlowReturn gst_jtv_src_create (GstBaseSrc * basesrc, guint64 offset,
   guint8 *data = GST_BUFFER_DATA(buf);
   int size = GST_BUFFER_SIZE(buf);
 
+  GST_DEBUG_OBJECT (src, "Requesting a buffer of size %d", size);
+
   int read = RTMP_Read(src->rtmp, (char *)data, size);
+
+  GST_DEBUG_OBJECT (src, "Read returned %d", read);
 
   if (read == 0) {
     gst_buffer_unref(buf);
@@ -411,7 +417,11 @@ static SoupMessage *download_xml(GstJtvSrc *src) {
 
   SoupMessage *msg = soup_message_new ("GET", url);
 
+  GST_DEBUG_OBJECT (src, "Sending GET request for %s", url);
+
   guint status = soup_session_send_message (session, msg);
+
+  GST_DEBUG_OBJECT (src, "Response received");
 
   if (!SOUP_STATUS_IS_SUCCESSFUL(status)) {
     GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ, (NULL), ("Error %d while downloading %s",
