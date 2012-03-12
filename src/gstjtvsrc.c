@@ -522,8 +522,11 @@ static gboolean rtmp_connect(GstJtvSrc *src, stream_node *node) {
 
   AVal swfopt; STR2AVAL(swfopt, "swfUrl");
   AVal jtvopt; STR2AVAL(jtvopt, "jtv");
+  AVal timeoutopt; STR2AVAL(timeoutopt, "timeout");
+
   AVal swf; STR2AVAL(swf, SWF_URL);
   AVal jtv; STR2AVAL(jtv, (char *)node->token);
+  AVal timeout; STR2AVAL(timeout, "5");
 
   if (!RTMP_SetOpt(src->rtmp, &swfopt, &swf)) {
     GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ, (NULL),
@@ -534,7 +537,12 @@ static gboolean rtmp_connect(GstJtvSrc *src, stream_node *node) {
   if (!RTMP_SetOpt(src->rtmp, &jtvopt, &jtv)) {
     GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ, (NULL),
 		       ("Failed to set jtv token"));
+    goto error;
+  }
 
+  if (!RTMP_SetOpt(src->rtmp, &timeoutopt, &timeout)) {
+    GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ, (NULL),
+		       ("Failed to set timeout"));
     goto error;
   }
 
